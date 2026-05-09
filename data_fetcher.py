@@ -24,7 +24,7 @@ def get_nifty500_tickers():
         # Fallback to a small list for testing if NSE is down
         return ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS"]
 
-def fetch_data(tickers, start_date, end_date):
+def fetch_data(tickers, start_date, end_date, interval='1d'):
     """
     Fetches historical data for a list of tickers using batch download.
     Uses local caching to avoid redundant downloads.
@@ -32,15 +32,17 @@ def fetch_data(tickers, start_date, end_date):
     all_data = {}
     to_download = []
     
+    # Cache key includes interval to avoid mixing daily/weekly data
+    cache_suffix = f"_{interval}" if interval != '1d' else ""
+    
     # 1. Identify what needs downloading
     for ticker in tickers:
-        cache_file = os.path.join(CACHE_DIR, f"{ticker}.parquet")
+        cache_file = os.path.join(CACHE_DIR, f"{ticker}{cache_suffix}.parquet")
         if os.path.exists(cache_file):
             try:
                 df = pd.read_parquet(cache_file)
                 if not df.empty:
                     last_date = df.index[-1].strftime('%Y-%m-%d')
-                    # If cached data is up to date, use it
                     if last_date >= end_date:
                         all_data[ticker] = df
                         continue
@@ -51,45 +53,41 @@ def fetch_data(tickers, start_date, end_date):
     # 2. Batch Download missing data
     if to_download:
         try:
-            # Download with 1 year buffer for indicators (SMA 200)
-            download_start = (datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=365)).strftime('%Y-%m-%d')
+            download_start = (datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=500)).strftime('%Y-%m-%d')
             
-            # Use chunks for large universes to avoid timeouts
             chunk_size = 50
             for i in range(0, len(to_download), chunk_size):
                 chunk = to_download[i:i+chunk_size]
-                df_chunk = yf.download(chunk, start=download_start, end=end_date, progress=False, group_by='ticker')
+                df_chunk = yf.download(chunk, start=download_start, end=end_date, interval=interval, progress=False, group_by='ticker')
                 
                 for ticker in chunk:
                     if ticker in df_chunk.columns.get_level_values(0):
                         ticker_df = df_chunk[ticker].dropna(how='all')
                         if not ticker_df.empty:
-                            cache_file = os.path.join(CACHE_DIR, f"{ticker}.parquet")
+                            cache_file = os.path.join(CACHE_DIR, f"{ticker}{cache_suffix}.parquet")
                             ticker_df.to_parquet(cache_file)
                             all_data[ticker] = ticker_df
         except Exception as e:
             st.warning(f"Batch download failed: {e}. Falling back to individual downloads.")
-            # Fallback logic if batch fails
             for ticker in to_download:
                 try:
-                    df = yf.download(ticker, start=download_start, end=end_date, progress=False)
+                    df = yf.download(ticker, start=download_start, end=end_date, interval=interval, progress=False)
                     if not df.empty:
-                        df.to_parquet(os.path.join(CACHE_DIR, f"{ticker}.parquet"))
+                        df.to_parquet(os.path.join(CACHE_DIR, f"{ticker}{cache_suffix}.parquet"))
                         all_data[ticker] = df
                 except:
                     continue
                 
     return all_data
 
-def get_combined_data(tickers, start_date, end_date, column='Adj Close'):
+def get_combined_data(tickers, start_date, end_date, interval='1d', column='Adj Close'):
     """
     Returns a single DataFrame with columns as tickers and values as the specified column.
     """
-    data = fetch_data(tickers, start_date, end_date)
+    data = fetch_data(tickers, start_date, end_date, interval)
     combined = pd.DataFrame()
     
     for ticker, df in data.items():
-        # Check both 'Adj Close' and 'Close'
         col_to_use = None
         if column in df.columns:
             col_to_use = column
@@ -97,11 +95,9 @@ def get_combined_data(tickers, start_date, end_date, column='Adj Close'):
             col_to_use = 'Close'
             
         if col_to_use:
-            # Select and filter by date
             series = df[col_to_use]
             combined[ticker] = series
             
-    # Filter for the requested date range after combining
     if not combined.empty:
         combined = combined[(combined.index >= start_date) & (combined.index <= end_date)]
         

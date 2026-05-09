@@ -3,7 +3,7 @@ import numpy as np
 
 def calculate_performance_metrics(equity_df):
     """Calculates performance metrics from an equity curve DataFrame."""
-    if equity_df.empty:
+    if equity_df.empty or len(equity_df) < 2:
         return {}
     
     equity = equity_df['equity']
@@ -14,7 +14,7 @@ def calculate_performance_metrics(equity_df):
     days = (equity_df['date'].iloc[-1] - equity_df['date'].iloc[0]).days
     cagr = ((1 + total_return) ** (365 / days)) - 1 if days > 0 else 0
     
-    # Sharpe Ratio (assuming 0 risk-free rate for simplicity)
+    # Sharpe Ratio
     sharpe = (returns.mean() / returns.std()) * np.sqrt(252) if returns.std() > 0 else 0
     
     # Max Drawdown
@@ -22,16 +22,34 @@ def calculate_performance_metrics(equity_df):
     drawdown = (equity - cumulative_max) / cumulative_max
     max_drawdown = drawdown.min()
     
-    # Volatility (Annualized)
-    volatility = returns.std() * np.sqrt(252)
+    # Win Rate (of days)
+    win_rate = (returns > 0).mean()
     
     return {
         "Total Return": f"{total_return:.2%}",
         "CAGR": f"{cagr:.2%}",
         "Sharpe Ratio": f"{sharpe:.2f}",
         "Max Drawdown": f"{max_drawdown:.2%}",
-        "Volatility": f"{volatility:.2%}"
+        "Win Rate": f"{win_rate:.2%}"
     }
+
+def get_monthly_returns(equity_df):
+    """Calculates monthly returns for a heatmap."""
+    df = equity_df.copy()
+    df.set_index('date', inplace=True)
+    monthly_equity = df['equity'].resample('ME').last()
+    monthly_returns = monthly_equity.pct_change().fillna(0)
+    
+    returns_df = monthly_returns.to_frame()
+    returns_df['Year'] = returns_df.index.year
+    returns_df['Month'] = returns_df.index.month_name()
+    
+    pivot_table = returns_df.pivot_table(index='Year', columns='Month', values='equity')
+    # Sort months correctly
+    month_order = ['January', 'February', 'March', 'April', 'May', 'June', 
+                   'July', 'August', 'September', 'October', 'November', 'December']
+    pivot_table = pivot_table.reindex(columns=month_order)
+    return pivot_table
 
 def get_drawdown_series(equity_df):
     """Returns the drawdown series for plotting."""
