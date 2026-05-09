@@ -73,14 +73,14 @@ if st.button("🚀 Run Advanced Backtest", use_container_width=True):
             # 2. Calculate All Indicators
             all_ind_data = {}
             for ind in st.session_state.indicators:
-                ind_matrix = pd.DataFrame(index=data.index)
+                ind_results = {}
                 for ticker in tickers:
                     if ticker in data.columns:
                         # Fetch individual ticker history for calculation
                         ticker_df = pd.DataFrame({'Close': data[ticker]})
                         val = indicators.get_indicator_value(ticker_df, ind['type'], {'window': ind['period']})
-                        ind_matrix[ticker] = val
-                all_ind_data[ind['alias']] = ind_matrix
+                        ind_results[ticker] = val
+                all_ind_data[ind['alias']] = pd.DataFrame(ind_results, index=data.index)
 
             # 3. Parse Formulas and Create Signal Matrices
             # Create a safe evaluation context
@@ -89,10 +89,28 @@ if st.button("🚀 Run Advanced Backtest", use_container_width=True):
                 context[alias] = matrix
             
             try:
-                # Simplify formulas for pandas evaluation
-                # Note: This is a basic parser. For production, a more robust one like ScoreParser is needed.
-                entry_signals = eval(entry_formula.replace("and", "&").replace("or", "|"), {}, context).fillna(False)
-                exit_signals = eval(exit_formula.replace("and", "&").replace("or", "|"), {}, context).fillna(False)
+                # Improve formula parsing:
+                # 1. Wrap comparisons in parentheses to fix & / | precedence
+                def wrap_comparisons(formula):
+                    # Simple regex to find comparison patterns and wrap them
+                    # Matches something like: Alias > Value or Alias < Alias
+                    pattern = r'([\w\.]+)\s*(>|<|>=|<=|==|!=)\s*([\w\.]+)'
+                    return re.sub(pattern, r'(\1 \2 \3)', formula)
+
+                processed_entry = wrap_comparisons(entry_formula).replace("and", "&").replace("or", "|")
+                processed_exit = wrap_comparisons(exit_formula).replace("and", "&").replace("or", "|")
+                
+                entry_signals = eval(processed_entry, {}, context)
+                # Ensure it's a boolean mask
+                if not isinstance(entry_signals, pd.DataFrame):
+                    entry_signals = entry_signals.to_frame()
+                entry_signals = entry_signals.fillna(False).astype(bool)
+                
+                exit_signals = eval(processed_exit, {}, context)
+                if not isinstance(exit_signals, pd.DataFrame):
+                    exit_signals = exit_signals.to_frame()
+                exit_signals = exit_signals.fillna(False).astype(bool)
+                
                 ranking_scores = eval(ranking_formula, {}, context).fillna(0)
                 
                 # 4. Run Backtest
