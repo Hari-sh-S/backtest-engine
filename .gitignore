@@ -1,0 +1,5 @@
+data_cache/
+__pycache__/
+*.parquet
+.streamlit/
+temp_repo/
